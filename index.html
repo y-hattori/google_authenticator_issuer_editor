@@ -1,0 +1,106 @@
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>jsQR と p5.js</title>
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.4.0/lib/p5.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script> 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.qrcode/1.0/jquery.qrcode.min.js"></script> 
+  <script src="https://cdn.jsdelivr.net/npm/protobufjs@6.10.1/dist/protobuf.min.js"></script>
+</head>
+<body>
+  <h1>Google Authenticator の登録されている発行者の名前を変えるやつ</h1>
+※QRコードの読み取りを伴いますので、カメラの使用は許可してください。
+<ol>
+<li>Google Authenticator の右上の…からアカウントのエクスポート(Androidではアカウントを移行→アカウントのエクスポート)を実行し、名前を変更したいアカウントを<b>1つだけ</b>選択し、エクスポートしてください。2つ以上選ぶとバグります。多分。</li>
+<li>表示されたQRコードをPCのカメラで読み取ってください。</li>
+<li>読み取り成功すると、発行者と名前欄に反映されますので、変更してください。日本語とか入れるとバグります。多分。</li>
+<li>変更後QR生成ボタンを押すとQRコードが表示されますので、Google Authenticatorで読み取ってください。追加されたアカウントが元のアカウントと同じコードを生成していることを確認してください。</li>
+</ol>
+  <script>
+    let capture;
+    let payload;
+
+    function setup() {
+      pixelDensity(1);
+      createCanvas(640, 500); // 下にテキスト表示用の領域を作る（ビデオの高さ＋20）
+      capture = createCapture(VIDEO);
+      capture.size(640, 480);
+      capture.hide();
+    }
+
+    function draw() {
+      background(0);
+      image(capture, 0, 0);
+
+      capture.loadPixels();
+      const code = jsQR(capture.pixels, capture.width, capture.height, { inversionAttempts: "dontInvert" });
+      fill(255);
+      textSize(16);
+      textAlign(CENTER);
+      if (code) {
+        text(`QRコードのデータ： ${code.data}`, width / 2, height - 4);
+        console.log(code.data);
+        protobuf.load("./otpauth-migration.proto", function (err, root) {
+          if (err) throw err;
+          let parser = new URL(code.data);
+          let data = code.data.match(/data=(.+)$/)[1];
+          const OtpauthMigration = root.lookupType("otpauth_migration.Payload");
+          var u8arr = base64ToUint8Array(decodeURIComponent(data));
+          payload = OtpauthMigration.decode(u8arr);
+          console.log(payload.otpParameters[0].issuer, payload.otpParameters[0].name);
+//Android版はなぜか名前に発行者を含んで出力がおかしくなるので除去
+          let issuer_str = payload.otpParameters[0].issuer + ":";
+console.log(issuer_str);
+          if (~payload.otpParameters[0].name.indexOf(issuer_str)){
+console.log(issuer_str);
+            payload.otpParameters[0].name = payload.otpParameters[0].name.replace(issuer_str,"");
+          }
+          document.getElementById("issuer").value = payload.otpParameters[0].issuer;
+          document.getElementById("name").value = payload.otpParameters[0].name;
+        });
+      } else {
+        text(`（QRコードが見つかりません）`, width / 2, height - 4);
+      }
+    }
+
+// (from: https://stackoverflow.com/a/11562550/2885946)
+function uint8ArrayToBase64(uint8Array) {
+  return btoa(String.fromCharCode(...uint8Array));
+}
+
+// (from: https://gist.github.com/borismus/1032746#gistcomment-1493026)
+function base64ToUint8Array(base64Str) {
+console.log(base64Str);
+  const raw = atob(base64Str);
+  return Uint8Array.from(Array.prototype.map.call(raw, (x) => { 
+    return x.charCodeAt(0); 
+  })); 
+}
+
+    function qrdraw(){
+      protobuf.load("./otpauth-migration.proto", function (err, root) {
+        if (err) throw err;
+        payload.otpParameters[0].issuer = document.getElementById("issuer").value;
+        payload.otpParameters[0].name = document.getElementById("name").value;
+        console.log(payload);
+        const OtpauthMigration = root.lookupType("otpauth_migration.Payload");
+        var encode = OtpauthMigration.encode(payload).finish();
+        console.log(encode);
+        var u8text = uint8ArrayToBase64(encode);
+        console.log(u8text);
+        var qrtext = "otpauth-migration://offline?data=" + u8text;
+        var utf8qrtext = unescape(encodeURIComponent(qrtext));
+        $("#img-qr").html("");
+        $("#img-qr").qrcode({text:utf8qrtext}); 
+      });
+    }
+  </script>
+<form action="javascript:qrdraw();">
+  発行者:<input id="issuer"/><br/>
+  名前:<input id="name"/><br/>
+  <input type="submit" value="QR生成"/>
+</form>
+<div id="img-qr"></div>
+</body>
+</html>
